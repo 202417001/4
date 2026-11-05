@@ -1,45 +1,37 @@
+-- 最基础兼容版本，放弃高级排版
 local Queue = {}
-local MAX_LINES = 80
-local container = (type(gethui) == "function") and gethui() or game:GetService("CoreGui")
-local gui = Instance.new("ScreenGui", container); gui.Name = "x"
+local MAX_LINES = 50
+local container = game:GetService("CoreGui")
 
--- 主面板
-local frame = Instance.new("Frame", gui)
-frame.Size = UDim2.new(0, 520, 0, 550)
-frame.Position = UDim2.new(0, 15, 0, 50)
-frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-frame.BackgroundTransparency = 0.1
+local gui = Instance.new("ScreenGui")
+gui.Name = "Z"
+gui.DisplayOrder = 9999999
+gui.IgnoreGuiInset = true
+gui.Parent = container
 
-local title = Instance.new("TextLabel", frame)
-title.Size = UDim2.new(1, 0, 0, 30)
-title.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-title.Text = " 抓包中... 随便开枪，不会卡死。按住上下滑"
-title.TextColor3 = Color3.fromRGB(0, 255, 0)
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 14
-title.TextXAlignment = Enum.TextXAlignment.Left
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 450, 0, 500)
+frame.Position = UDim2.new(0, 10, 0, 10)
+frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+frame.BackgroundTransparency = 0.2
+frame.BorderSizePixel = 1
+frame.BorderColor3 = Color3.fromRGB(255, 255, 255)
+frame.Parent = gui
 
--- 滚动区
-local scroll = Instance.new("ScrollingFrame", frame)
-scroll.Size = UDim2.new(1, -10, 1, -35)
-scroll.Position = UDim2.new(0, 5, 0, 35)
-scroll.BackgroundTransparency = 1
-scroll.BorderSizePixel = 0
-scroll.ScrollBarThickness = 8
-
--- 单一超大 Label 用于显示（不再每帧重建实例）
-local label = Instance.new("TextLabel", scroll)
-label.Size = UDim2.new(1, -10, 0, 0)
-label.AutomaticSize = Enum.AutomaticSize.Y
+local label = Instance.new("TextLabel")
+label.Size = UDim2.new(1, -20, 1, -20)
+label.Position = UDim2.new(0, 10, 0, 10)
 label.BackgroundTransparency = 1
-label.TextColor3 = Color3.fromRGB(200, 200, 200)
+label.Text = "等待抓包..."
+label.TextColor3 = Color3.fromRGB(255, 255, 255)
 label.TextXAlignment = Enum.TextXAlignment.Left
 label.TextYAlignment = Enum.TextYAlignment.Top
 label.Font = Enum.Font.Code
-label.TextSize = 12
+label.TextSize = 11
 label.TextWrapped = true
+label.Parent = frame
 
--- ========== 抓包部分 ==========
+-- 核心抓包逻辑
 local function simpleSer(v)
     local t = typeof(v)
     if t == "Instance" then return v.ClassName .. ":" .. v.Name
@@ -49,30 +41,35 @@ local function simpleSer(v)
     else return tostring(v) end
 end
 
-local oldNamecall
 local ok, mt = pcall(function() return getrawmetatable(game) end)
 if not ok then
-    title.Text = " 你的执行器不支持 getrawmetatable。"
+    print("[抓包失败] 不支持 getrawmetatable")
+    label.Text = "不支持 getrawmetatable"
     return
 end
 
-oldNamecall = mt.__namecall
+local oldNamecall = mt.__namecall
 setreadonly(mt, false)
 mt.__namecall = newcclosure(function(self, ...)
     local method = getnamecallmethod()
     if method == "FireServer" or method == "InvokeServer" then
-        -- 必须用 pcall 包住，抓包出错绝对不能影响游戏原本开枪
         pcall(function()
             local n = tostring(self.Name):lower()
-            if not (n:find("pos") or n:find("cframe") or n:find("ping") or n:find("move") or n:find("mouse")) then
+            -- 过滤高频垃圾包
+            if not (n:find("pos") or n:find("cframe") or n:find("ping") or n:find("move") or n:find("mouse") or n:find("update")) then
                 local args = {...}
                 local parts = {}
                 for i = 1, math.min(#args, 5) do
                     parts[i] = simpleSer(args[i])
                 end
-                local line = "["..method.."] "..self.Name.."\n -> "..table.concat(parts, ", ")
+                local line = "["..method.."] "..self.Name.." -> "..table.concat(parts, ", ")
+                
+                -- 1. 塞进面板
                 table.insert(Queue, line)
                 if #Queue > MAX_LINES then table.remove(Queue, 1) end
+                
+                -- 2. 塞进控制台
+                print("[NET] " .. line)
             end
         end)
     end
@@ -80,18 +77,15 @@ mt.__namecall = newcclosure(function(self, ...)
 end)
 setreadonly(mt, true)
 
--- ========== UI 刷新线程（独立运行，不阻塞抓包） ==========
+-- 独立 UI 刷新
 task.spawn(function()
     local lastCount = 0
-    while task.wait(0.3) do
+    while task.wait(0.5) do
         if #Queue ~= lastCount then
             lastCount = #Queue
-            label.Text = table.concat(Queue, "\n----------\n")
-            scroll.CanvasSize = UDim2.new(0, 0, 0, label.AbsoluteContentSize.Y + 10)
-            -- 自动滚到底部
-            scroll.CanvasPosition = Vector2.new(0, scroll.CanvasSize.Y.Offset)
+            label.Text = table.concat(Queue, "\n")
         end
     end
 end)
 
-print("抓包已启动。开枪测试，不会卡死了。")
+print("极简版抓包已启动。去开枪。")
