@@ -1,173 +1,222 @@
--- ============================================
--- Ninja Panel v27 (属性锁死版)
--- ============================================
-
+-- 诊断面板：显示饥饿/耐力相关数值落点，供截屏
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+
 local LP = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
+local LINES = {}
+local MAX_LINES = 400
 
-local CFG = { ESP = false, ESPHealth = false, ESPRole = false, Scale = 1.0, LockStamina = false }
-local CN_ROLE_MAP = { ["Chef"]="厨师",["Civilian"]="平民",["Delivery"]="快递员",["Farmer"]="农夫",["Fire"]="消防员",["Medical"]="医生",["Police"]="警察",["Prisoner"]="囚犯",["Road Service"]="路政",["Transit"]="公交司机" }
-
-local function getHiddenGui(name)
-    local g = Instance.new("ScreenGui"); g.Name = name; g.ResetOnSpawn = false; g.IgnoreGuiInset = true
-    if syn and syn.protect_gui then syn.protect_gui(g); g.Parent = game:GetService("CoreGui")
-    elseif gethui then g.Parent = gethui() else g.Parent = LP:WaitForChild("PlayerGui") end
-    return g
+local function push(s)
+    table.insert(LINES, tostring(s))
+    if #LINES > MAX_LINES then table.remove(LINES, 1) end
 end
 
-local mainGui = getHiddenGui("MainPanel_" .. math.random(1000, 9999))
-local espGui = getHiddenGui("EspRender_" .. math.random(1000, 9999))
-
-local main = Instance.new("Frame"); main.Size = UDim2.fromOffset(300, 420); main.Position = UDim2.fromScale(0.02, 0.2)
-main.BackgroundColor3 = Color3.fromRGB(20, 20, 24); main.BorderSizePixel = 0; main.Active = true; main.Draggable = true; main.Parent = mainGui
-Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
-local uiScale = Instance.new("UIScale"); uiScale.Scale = 1; uiScale.Parent = main
-
-local icon = Instance.new("TextButton"); icon.Size = UDim2.fromOffset(46, 46); icon.Position = UDim2.fromOffset(12, 240)
-icon.BackgroundColor3 = Color3.fromRGB(40, 40, 52); icon.Text = "N"; icon.TextColor3 = Color3.new(1, 1, 1); icon.Font = Enum.Font.GothamBold; icon.TextSize = 20
-icon.Visible = false; icon.Active = true; icon.Draggable = true; icon.Parent = mainGui; Instance.new("UICorner", icon).CornerRadius = UDim.new(1, 0)
-icon.MouseButton1Click:Connect(function() main.Visible = true; icon.Visible = false end)
-local function minimize() main.Visible = false; icon.Visible = true end
-
-local title = Instance.new("TextLabel"); title.Size = UDim2.new(1, 0, 0, 32); title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-title.BorderSizePixel = 0; title.Text = "Ninja v27 (属性锁死)"; title.TextColor3 = Color3.new(1, 1, 1); title.Font = Enum.Font.GothamBold; title.TextSize = 16; title.Parent = main
-Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
-
-local function mkTitleBtn(text, xoff, cb)
-    local b = Instance.new("TextButton"); b.Size = UDim2.fromOffset(28, 28); b.Position = UDim2.new(1, xoff, 0, 2)
-    b.BackgroundColor3 = Color3.fromRGB(60, 60, 75); b.BorderSizePixel = 0; b.Text = text; b.TextColor3 = Color3.new(1, 1, 1)
-    b.Font = Enum.Font.GothamBold; b.TextSize = 14; b.Parent = main; Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
-    b.MouseButton1Click:Connect(cb); return b
-end
-mkTitleBtn("−", -94, function() uiScale.Scale = math.max(0.6, uiScale.Scale - 0.1) end)
-mkTitleBtn("+", -64, function() uiScale.Scale = math.min(1.8, uiScale.Scale + 0.1) end)
-mkTitleBtn("▁", -32, minimize)
-
-local scroll = Instance.new("ScrollingFrame"); scroll.Size = UDim2.new(1, -12, 1, -80); scroll.Position = UDim2.fromOffset(6, 38)
-scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0; scroll.ScrollBarThickness = 4; scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y; scroll.Parent = main
-local layout = Instance.new("UIListLayout"); layout.Padding = UDim.new(0, 6); layout.SortOrder = Enum.SortOrder.LayoutOrder; layout.Parent = scroll
-
-local statusBar = Instance.new("TextLabel"); statusBar.Size = UDim2.new(1, -12, 0, 36); statusBar.Position = UDim2.new(0, 6, 1, -42)
-statusBar.BackgroundColor3 = Color3.fromRGB(30, 30, 40); statusBar.BorderSizePixel = 0; statusBar.Text = "等待拦截..."
-statusBar.TextColor3 = Color3.fromRGB(0, 255, 150); statusBar.Font = Enum.Font.GothamBold; statusBar.TextSize = 12
-statusBar.Parent = main; Instance.new("UICorner", statusBar).CornerRadius = UDim.new(0, 6)
-
-local function addButton(text, cb, color)
-    local b = Instance.new("TextButton"); b.Size = UDim2.new(1, -6, 0, 34); b.BackgroundColor3 = color or Color3.fromRGB(50, 50, 60)
-    b.BorderSizePixel = 0; b.Text = text; b.TextColor3 = Color3.new(1, 1, 1); b.Font = Enum.Font.Gotham; b.TextSize = 14; b.Parent = scroll
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6); b.MouseButton1Click:Connect(cb); return b
+-- ---------- 容器：优先 gethui，退回 CoreGui ----------
+local container
+if type(gethui) == "function" then
+    container = gethui()
+else
+    container = game:GetService("CoreGui")
 end
 
-local function addToggle(name, key)
-    local b; b = addButton((CFG[key] and "[开] " or "[关] ") .. name, function()
-        CFG[key] = not CFG[key]; b.Text = (CFG[key] and "[开] " or "[关] ") .. name
-        b.BackgroundColor3 = CFG[key] and Color3.fromRGB(0, 140, 80) or Color3.fromRGB(50, 50, 60)
+local gui = Instance.new("ScreenGui")
+gui.Name = "a"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 999
+gui.Parent = container
+
+-- ---------- 面板主体 ----------
+local frame = Instance.new("Frame")
+frame.Name = "b"
+frame.Size = UDim2.new(0, 520, 0, 640)
+frame.Position = UDim2.new(0, 20, 0, 20)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+frame.BackgroundTransparency = 0.15
+frame.BorderSizePixel = 0
+frame.Parent = gui
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 28)
+title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+title.BorderSizePixel = 0
+title.Text = "  DIAG  |  饥饿/耐力诊断  |  滚动查看  "
+title.TextColor3 = Color3.fromRGB(0, 220, 120)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 16
+title.Parent = frame
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -8, 1, -36)
+scroll.Position = UDim2.new(0, 4, 0, 32)
+scroll.BackgroundTransparency = 1
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 6
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.Parent = frame
+
+local list = Instance.new("UIListLayout")
+list.Padding = UDim.new(0, 1)
+list.SortOrder = Enum.SortOrder.LayoutOrder
+list.Parent = scroll
+
+local label = Instance.new("TextLabel")
+label.Size = UDim2.new(1, -8, 0, 0)
+label.BackgroundTransparency = 1
+label.Text = ""
+label.TextColor3 = Color3.fromRGB(230, 230, 230)
+label.TextXAlignment = Enum.TextXAlignment.Left
+label.TextYAlignment = Enum.TextYAlignment.Top
+label.Font = Enum.Font.Code
+label.TextSize = 13
+label.TextWrapped = true
+label.AutomaticSize = Enum.AutomaticSize.Y
+label.Parent = scroll
+
+-- 实时输出区（Remote 触发）
+local liveBox = Instance.new("TextLabel")
+liveBox.Size = UDim2.new(1, -8, 0, 90)
+liveBox.Position = UDim2.new(0, 4, 1, -94)
+liveBox.BackgroundColor3 = Color3.fromRGB(30, 10, 10)
+liveBox.BackgroundTransparency = 0.2
+liveBox.BorderSizePixel = 0
+liveBox.Text = "LIVE REMOTE:\n"
+liveBox.TextColor3 = Color3.fromRGB(255, 180, 80)
+liveBox.TextXAlignment = Enum.TextXAlignment.Left
+liveBox.TextYAlignment = Enum.TextYAlignment.Top
+liveBox.Font = Enum.Font.Code
+liveBox.TextSize = 12
+liveBox.TextWrapped = true
+liveBox.Parent = frame
+
+-- ---------- 写日志 ----------
+local function log(s)
+    push(s)
+    label.Text = table.concat(LINES, "\n")
+    task.defer(function()
+        scroll.CanvasSize = UDim2.new(0, 0, 0, list.AbsoluteContentSize.Y + 10)
     end)
-    if CFG[key] then b.BackgroundColor3 = Color3.fromRGB(0, 140, 80) end; return b
 end
 
-local function getRoleLabel(plr)
-    if plr.Team then
-        local tName = plr.Team.Name
-        if tName and tName ~= "" and tName ~= "Neutral" and tName ~= "???" and not tName:find("%?") then return CN_ROLE_MAP[tName] or tName end
+local liveLines = {}
+local function live(s)
+    table.insert(liveLines, s)
+    if #liveLines > 6 then table.remove(liveLines, 1) end
+    liveBox.Text = "LIVE REMOTE:\n" .. table.concat(liveLines, "\n")
+end
+
+-- ---------- 扫描函数 ----------
+local function dumpAttrs(obj, tag)
+    log("== ATTR " .. tag .. " ==")
+    local ok, attrs = pcall(function() return obj:GetAttributes() end)
+    if not ok or not attrs or next(attrs) == nil then
+        log("  (empty)"); return
     end
-    return "平民"
+    for k, v in pairs(attrs) do
+        log("  " .. tostring(k) .. " = " .. tostring(v))
+    end
 end
 
--- ==========================================
--- 终极核心：拦截并篡改 PlayerEvent
--- ==========================================
-local realStamina = "未知"
-local realHunger = "未知"
+local function dumpKids(obj, tag)
+    log("== CHILD " .. tag .. " ==")
+    local ok, kids = pcall(function() return obj:GetChildren() end)
+    if not ok or not kids or #kids == 0 then
+        log("  (empty)"); return
+    end
+    for _, c in ipairs(kids) do
+        local ex = ""
+        if c:IsA("ValueBase") then
+            ex = "  = " .. tostring(c.Value)
+        elseif c:IsA("LocalScript") then
+            ex = "  Disabled=" .. tostring(c.Disabled)
+        elseif c:IsA("Tool") then
+            ex = "  [TOOL]"
+        end
+        log("  " .. c.ClassName .. " : " .. c.Name .. ex)
+    end
+end
 
-local function startLock()
-    if not hookmetamethod then statusBar.Text = "执行器不支持 Hook" return end
-    
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        
-        if not checkcaller() and (method == "FireServer" or method == "InvokeServer") and self.Name == "PlayerEvent" then
-            local args = {...}
-            
-            -- 抓取真实的数值 (参数 3)
-            if type(args[3]) == "number" and args[3] >= 0 and args[3] <= 100 then
-                realStamina = tostring(math.floor(args[3]))
-                -- 如果开启锁死，强制改成 100
-                if CFG.LockStamina then
-                    args[3] = 100
-                end
+local function walkScripts(node, depth)
+    if depth > 4 then return end
+    for _, c in ipairs(node:GetChildren()) do
+        if c:IsA("LocalScript") then
+            log(string.rep("  ", depth) .. "LS: " .. c.Name .. "  Disabled=" .. tostring(c.Disabled))
+        end
+        walkScripts(c, depth + 1)
+    end
+end
+
+local function dumpGUI()
+    log("== PlayerGui LocalScripts ==")
+    local pg = LP:FindFirstChild("PlayerGui")
+    if not pg then log("  (no PlayerGui)"); return end
+    pcall(walkScripts, pg, 1)
+end
+
+-- Remote hook
+local hooked = {}
+local function hookRoot(root, tag)
+    local function scan(node, d)
+        if d > 3 then return end
+        for _, c in ipairs(node:GetChildren()) do
+            if c:IsA("RemoteEvent") and not hooked[c] then
+                hooked[c] = true
+                pcall(function()
+                    c.OnClientEvent:Connect(function(...)
+                        local args = {...}
+                        local parts = {}
+                        for i = 1, math.min(#args, 5) do
+                            parts[i] = tostring(args[i])
+                        end
+                        local name = c.Name:lower()
+                        local hit = name:find("hung") or name:find("stam")
+                            or name:find("energy") or name:find("food")
+                            or name:find("eat") or name:find("drink")
+                            or name:find("stat") or name:find("survival")
+                        local line = (hit and ">> " or "   ") .. c.Name .. "(" .. #args .. "): " .. table.concat(parts, ", ")
+                        live(line)
+                        if hit then log("[HIT] " .. line) end
+                    end)
+                end)
             end
-            
-            -- 抓取参数 2 (饥饿或状态)
-            if type(args[2]) == "number" and args[2] >= 0 and args[2] <= 100 then
-                realHunger = tostring(math.floor(args[2]))
-            end
-            
-            -- 放行修改后的包
-            return oldNamecall(self, unpack(args))
-        end
-        
-        return oldNamecall(self, ...)
-    end)
-    statusBar.Text = "✔ 监听已开启"
-end
-
--- 定时刷新底部文本
-task.spawn(function()
-    while task.wait(0.5) do
-        if realStamina ~= "未知" then
-            local lockStr = CFG.LockStamina and " (已锁 100)" or ""
-            statusBar.Text = "🍗 饥饿: " .. realHunger .. " | ⚡ 真实耐力: " .. realStamina .. lockStr
+            scan(c, d + 1)
         end
     end
-end)
-
--- ---------- 原生 BillboardGui ESP (极短血条) ----------
-local espData = {}
-local function buildESP(plr)
-    if plr == LP then return end; if espData[plr] then return end
-    local g = Instance.new("BillboardGui"); g.Name = "e_" .. math.random(10000, 99999); g.Size = UDim2.fromOffset(160, 50); g.AlwaysOnTop = true; g.Enabled = false; g.Parent = espGui
-    local nm = Instance.new("TextLabel"); nm.Size = UDim2.new(1, 0, 0, 16); nm.BackgroundTransparency = 1; nm.TextColor3 = Color3.new(1, 1, 1); nm.TextStrokeTransparency = 0; nm.Font = Enum.Font.GothamBold; nm.TextSize = 12; nm.Text = plr.Name; nm.Parent = g
-    local ds = Instance.new("TextLabel"); ds.Size = UDim2.new(1, 0, 0, 14); ds.Position = UDim2.fromOffset(0, 16); ds.BackgroundTransparency = 1; ds.TextColor3 = Color3.fromRGB(200, 200, 200); ds.TextStrokeTransparency = 0; ds.TextSize = 11; ds.Parent = g
-    local barBg = Instance.new("Frame"); barBg.Size = UDim2.fromOffset(24, 3); barBg.Position = UDim2.new(0.5, -16, 0, 32); barBg.BackgroundColor3 = Color3.fromRGB(60, 60, 60); barBg.BorderSizePixel = 0; barBg.Visible = false; barBg.Parent = g
-    local bar = Instance.new("Frame"); bar.Size = UDim2.fromScale(1, 1); bar.BackgroundColor3 = Color3.fromRGB(0, 220, 100); bar.BorderSizePixel = 0; bar.Parent = barBg
-    local hpText = Instance.new("TextLabel"); hpText.Size = UDim2.fromOffset(30, 14); hpText.Position = UDim2.new(0.5, 10, 0, 27); hpText.BackgroundTransparency = 1; hpText.TextColor3 = Color3.new(1, 1, 1); hpText.TextStrokeTransparency = 0; hpText.TextSize = 9; hpText.Font = Enum.Font.GothamBold; hpText.Text = "100%"; hpText.TextXAlignment = Enum.TextXAlignment.Left; hpText.Visible = false; hpText.Parent = g
-    espData[plr] = { gui = g, name = nm, dist = ds, bar = bar, barBg = barBg, hpText = hpText }
+    pcall(scan, root, 1)
 end
 
-Players.PlayerAdded:Connect(function(p) task.wait(1) buildESP(p) end)
-for _, p in ipairs(Players:GetPlayers()) do buildESP(p) end
-Players.PlayerRemoving:Connect(function(p) if espData[p] and espData[p].gui then espData[p].gui:Destroy() end; espData[p] = nil end)
+-- ---------- 全量执行 ----------
+local function fullScan()
+    LINES = {}
+    log("#### FULL SCAN START ####")
+    dumpAttrs(LP, "LocalPlayer")
+    dumpKids(LP, "LocalPlayer")
 
-local frameCount = 0
-RunService.RenderStepped:Connect(function()
-    frameCount = frameCount + 1; if frameCount % 2 ~= 0 then return end
-    for plr, data in pairs(espData) do
-        if not CFG.ESP or not plr.Character then data.gui.Enabled = false
-        else
-            local hrp = plr.Character:FindFirstChild("HumanoidRootPart"); local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hum.Health > 0 then
-                data.gui.Enabled = true; data.gui.Adornee = hrp; data.dist.Text = math.floor((Camera.CFrame.Position - hrp.Position).Magnitude) .. " studs"
-                if CFG.ESPRole then data.name.Text = "[" .. getRoleLabel(plr) .. "] " .. plr.Name else data.name.Text = plr.Name end
-                data.barBg.Visible = CFG.ESPHealth; data.hpText.Visible = CFG.ESPHealth
-                if CFG.ESPHealth then
-                    local hpRatio = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
-                    data.bar.Size = UDim2.fromScale(hpRatio, 1); data.bar.BackgroundColor3 = Color3.fromRGB(255 * (1 - hpRatio), 255 * hpRatio, 0); data.hpText.Text = math.floor(hpRatio * 100) .. "%"
-                end
-            else data.gui.Enabled = false end
-        end
+    local ch = LP.Character
+    if ch then
+        dumpAttrs(ch, "Character")
+        dumpKids(ch, "Character")
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        if hum then dumpAttrs(hum, "Humanoid") end
+    else
+        log("(no Character yet)")
     end
+
+    dumpGUI()
+    log("== Remote Hooks installed ==")
+    hookRoot(ReplicatedStorage, "RS")
+    hookRoot(game:GetService("Workspace"), "WS")
+    log("#### SCAN DONE ####")
+    log("正常吃喝/跑步，让数值变化，看 LIVE 区哪条参数在动。")
+end
+
+fullScan()
+
+LP.CharacterAdded:Connect(function()
+    task.wait(2)
+    log("#### RESPAWN RESCAN ####")
+    dumpAttrs(LP.Character, "Character(new)")
+    dumpKids(LP.Character, "Character(new)")
 end)
-
-addToggle("透视 玩家名字", "ESP")
-addToggle("透视 血条比例", "ESPHealth")
-addToggle("透视 中文职业", "ESPRole")
-
-addButton("开启网络 Hook", startLock, Color3.fromRGB(50, 150, 200))
-addToggle("锁死耐力值 100", "LockStamina")
-
-print("[Ninja Panel v27] 已加载")
